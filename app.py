@@ -42,23 +42,46 @@ try:
 
     st.divider()
 
-    # Tabloyu Göster (Skora göre sıralı)
+    # --- TABLO GÖSTERİMİ (Link ve Skor Destekli) ---
     st.write("### 💎 En İyi Yatırım Seçenekleri")
     
-    # Görselleştirme: Skora göre renklendirme ve emoji ekleme
-    def make_pretty(val):
-        return '✅' if val > 80 else '⛔' if val < 50 else '🟡'
+    # Emoji fonksiyonunu skor sütununa entegre edelim
+    def get_status(val):
+        if val > 80: return "✅ Fırsat"
+        if val < 50: return "⛔ Riskli"
+        return "🟡 Normal"
 
-    df['Durum'] = df['Skor'].apply(make_pretty)
+    df['Durum'] = df['Skor'].apply(get_status)
     
-    display_df = df[['Durum', 'Skor', 'Fiyat', 'Metrekare', 'Amortisman_Yil', 'Birim_m2']].sort_values(by='Skor', ascending=False)
+    # Eğer botun eski sürümü çalıştıysa ve Link sütunu yoksa kodun çökmesini engelle
+    if 'Link' not in df.columns:
+        df['Link'] = "https://www.emlakjet.com/satilik-konut/antalya-konyaalti/"
+        
+    # Gösterilecek sütunları seç (Link dahil)
+    display_df = df[['Durum', 'Skor', 'Fiyat', 'Metrekare', 'Amortisman_Yil', 'Birim_m2', 'Link']].sort_values(by='Skor', ascending=False)
     
-    st.dataframe(display_df.style.format({
-        'Fiyat': '{:,.0f} TL',
-        'Skor': '{:.1f}',
-        'Amortisman_Yil': '{:.1f} Yıl',
-        'Birim_m2': '{:,.0f} TL'
-    }))
+    st.data_editor(
+        display_df,
+        column_config={
+            "Link": st.column_config.LinkColumn(
+                "İlan Detayı",
+                help="İlan sayfasına gitmek için tıkla",
+                display_text="İlanı Aç 🔗"
+            ),
+            "Fiyat": st.column_config.NumberColumn("Fiyat", format="%d TL"),
+            "Skor": st.column_config.ProgressColumn(
+                "Yatırım Skoru", 
+                min_value=0, 
+                max_value=100, 
+                format="%.1f"
+            ),
+            "Amortisman_Yil": st.column_config.NumberColumn("Geri Dönüş", format="%.1f Yıl"),
+            "Birim_m2": st.column_config.NumberColumn("Birim m²", format="%d TL")
+        },
+        disabled=True, # Tablodaki verilerin elle değiştirilmesini engeller
+        hide_index=True, # Sol baştaki 0,1,2 gibi indeks numaralarını gizler
+        use_container_width=True # Tabloyu ekrana tam yayar
+    )
 
 except Exception as e:
     st.warning("Henüz 'cekilen_ilanlar.csv' dosyası yüklenmemiş veya formatı hatalı. Lütfen botu çalıştırıp dosyayı GitHub'a yükleyin.")
