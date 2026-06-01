@@ -1,92 +1,92 @@
 import streamlit as st
 import pandas as pd
-import time
 import re
 
 st.set_page_config(page_title="Emlak Radar PRO", layout="wide")
 
-# --- BÖLGE ENDEKSLERİ (Antalya Endeksleri) ---
+# --- 1. BÖLGE ENDEKSLERİ (ÇIRALI EKLENDİ) ---
 REGION_DATA = {
     "Konyaaltı": {"m2_fiyat": 60000, "kira_m2": 300, "hedef_amortisman": 240}, 
+    "Çıralı": {"m2_fiyat": 90000, "kira_m2": 600, "hedef_amortisman": 180}, # Turistik/Bungalow bölgesi (Kısa amortisman)
     "Finike": {"m2_fiyat": 35000, "kira_m2": 150, "hedef_amortisman": 280},
     "Muratpaşa": {"m2_fiyat": 45000, "kira_m2": 250, "hedef_amortisman": 220}
 }
 
-st.title("🚀 Emlak Radar v1.0 - Yatırım Analiz Merkezi")
+st.title("🚀 Emlak Radar v1.1 - Yatırım Analiz Merkezi")
 
-# --- 1. SORUNUN ÇÖZÜMÜ: ÖNBELLEK BYPASS & MANUEL GÜNCELLEME MOTORU ---
-col_refresh, _ = st.columns([1, 4])
-with col_refresh:
-    if st.button("🔄 Verileri Yeniden Tara & Güncelle", use_container_width=True):
-        st.cache_data.clear() # Tüm Streamlit veri belleğini sıfırlar
-        st.toast("Bellek temizlendi, diskteki en güncel CSV dosyası okunuyor!", icon="🔄")
-        time.sleep(0.3)
+# --- 2. ZORUNLU GÜNCELLEME BUTONU ---
+# Bu buton sayfayı yeniden yükler. Cache (önbellek) kullanmadığımız için 
+# her tıklamada diskteki "cekilen_ilanlar.csv" dosyası ZORLA yeniden okunur.
+col_btn, _ = st.columns([1, 4])
+with col_btn:
+    if st.button("🔄 İlanları Diskten Zorla Yeniden Oku", type="primary", use_container_width=True):
+        st.rerun()
 
-@st.cache_data
-def load_and_sync_csv():
-    # Dosyayı diskten önbellek korumalı okur
+# --- 3. DİSKTEN CANLI VERİ OKUMA (ÖNBELLEKSİZ) ---
+def load_live_csv():
+    # st.cache_data KALDIRILDI! Asla eski veriyi tutmaz.
     return pd.read_csv("cekilen_ilanlar.csv")
 
-# --- VERİ YÜKLEME VE ANALİZ HATTI ---
 try:
-    df_raw = load_and_sync_csv()
-    df = df_raw.copy()
+    df = load_live_csv()
     
-    # --- 2. SORUNUN ÇÖZÜMÜ: SÜTUN VE URL NORMALLEŞTİRME MOTORU ---
-    # Sütun isimlerindeki gizli boşlukları temizle
+    # Sütun isimlerindeki boşlukları temizle
     df.columns = df.columns.str.strip()
     
-    # Botun yazabileceği olası link varyasyonlarını tek bir standart "Link" sütununa eşitle
-    column_rename_matrix = {}
+    # Olası tüm link sütunu isimlerini "Link" olarak standartlaştır
+    rename_dict = {}
     for col in df.columns:
         if col.lower() in ['link', 'url', 'ilan_link', 'ilan_url', 'detay_link']:
-            column_rename_matrix[col] = 'Link'
-    
-    if column_rename_matrix:
-        df = df.rename(columns=column_rename_matrix)
+            rename_dict[col] = 'Link'
+    if rename_dict:
+        df = df.rename(columns=rename_dict)
         
-    # Link sütunu hiç yoksa veya boşsa güvenli kategori yönlendirmesi sağla
     if 'Link' not in df.columns:
-        df['Link'] = "https://www.emlakjet.com/satilik-konut/antalya-konyaalti/"
-    else:
-        # Link hücrelerindeki boşlukları temizle ve string'e dönüştür
-        df['Link'] = df['Link'].astype(str).str.strip()
+        df['Link'] = "https://www.google.com/search?q=antalya+emlak" # Sütun hiç yoksa güvenlik ağı
         
-        # Göreceli (Relative) URL'leri ve protokol hatalarını onaran fonksiyon
-        def sanitize_listing_url(url_str):
-            if not url_str or url_str == 'nan' or url_str == '':
-                return "https://www.emlakjet.com/satilik-konut/antalya-konyaalti/"
+    # --- 4. ZIRHLI LİNK ONARIM MOTORU ---
+    def force_valid_url(val):
+        val = str(val).strip()
+        if pd.isna(val) or val.lower() == 'nan' or val == '':
+            return "https://www.google.com"
             
-            # Çift slash ile başlayan hatalı protokolleri düzelt
-            if url_str.startswith('//'):
-                return "https:" + url_str
-                
-            # Eğer link doğrudan domain içermiyorsa (Örn: /ilan/satilik-daire-123)
-            if not url_str.startswith('http://') and not url_str.startswith('https://'):
-                base_domain = "https://www.emlakjet.com"
-                if url_str.startswith('/'):
-                    return base_domain + url_str
-                else:
-                    return base_domain + "/" + url_str
-            return url_str
+        # 1. Aşama: Eğer hücrenin içinde "http" ile başlayan bir link varsa (örn HTML içindeyse) onu çekip çıkar.
+        urls = re.findall(r'(https?://[^\s"\'<>]+)', val)
+        if urls: 
+            return urls[0]
+            
+        # 2. Aşama: Linkte "http" yok ama emlak sitesinin kendi yoluysa
+        if val.startswith('www.'): 
+            return 'https://' + val
+        if val.startswith('//'): 
+            return 'https:' + val
+        if val.startswith('/'): 
+            return 'https://www.emlakjet.com' + val # Göreceli linkse varsayılan siteyi ekle
+            
+        # 3. Aşama: Sadece saçma sapan bir metin geldiyse, direkt https:// eklemeyi dene
+        if "." in val:
+            return "https://" + val
+            
+        return "https://www.google.com/search?q=" + val.replace(" ", "+")
 
-        df['Link'] = df['Link'].apply(sanitize_listing_url)
+    df['Link'] = df['Link'].apply(force_valid_url)
 
-    # --- BÖLGE SEÇİM KOKPİTİ ---
-    available_regions = list(REGION_DATA.keys())
-    region = st.selectbox("Analiz Edilecek Yatırım Bölgesi:", available_regions, index=0)
+    # --- 5. BÖLGE SEÇİMİ VE ANALİZ ---
+    region = st.selectbox("Analiz Edilecek Yatırım Bölgesi:", list(REGION_DATA.keys()), index=0)
     target = REGION_DATA[region]
     
-    # Matematiksel Analiz Alanı
+    # Hata almamak için sayısal sütunları temizle ve dönüştür
+    df['Fiyat'] = pd.to_numeric(df['Fiyat'], errors='coerce').fillna(0)
+    df['Metrekare'] = pd.to_numeric(df['Metrekare'], errors='coerce').fillna(1) # Sıfıra bölme hatasını engellemek için
+    
     df['Birim_m2'] = df['Fiyat'] / df['Metrekare']
     df['Tahmini_Kira'] = df['Metrekare'] * target['kira_m2']
     df['Amortisman_Yil'] = df['Fiyat'] / (df['Tahmini_Kira'] * 12)
     
-    # Rasyonel Yatırım Skoru Formülü
     df['Skor'] = 100 - ((df['Birim_m2'] / target['m2_fiyat']) * 30) - ((df['Amortisman_Yil'] / (target['hedef_amortisman']/12)) * 30)
     df['Skor'] = df['Skor'].clip(0, 100)
 
-    # --- METRİK GOSTERGELERİ ---
+    # --- 6. ARAYÜZ VE TABLO ---
     st.subheader(f"📍 {region} Bölgesi Güncel Analiz Tablosu")
     
     c1, c2, c3 = st.columns(3)
@@ -96,12 +96,9 @@ try:
 
     st.divider()
 
-    # --- TABLO MATRİSİ ---
-    st.write("### 💎 En İyi Yatırım Seçenekleri")
-    
     def get_status(val):
-        if val > 80: return "✅ Fırsat"
-        if val < 50: return "⛔ Riskli"
+        if val >= 80: return "✅ Fırsat"
+        if val <= 50: return "⛔ Riskli"
         return "🟡 Normal"
 
     df['Durum'] = df['Skor'].apply(get_status)
@@ -119,9 +116,7 @@ try:
             "Fiyat": st.column_config.NumberColumn("Fiyat", format="%d TL"),
             "Skor": st.column_config.ProgressColumn(
                 "Yatırım Skoru", 
-                min_value=0, 
-                max_value=100, 
-                format="%.1f"
+                min_value=0, max_value=100, format="%.1f"
             ),
             "Amortisman_Yil": st.column_config.NumberColumn("Geri Dönüş", format="%.1f Yıl"),
             "Birim_m2": st.column_config.NumberColumn("Birim m²", format="%d TL")
@@ -132,5 +127,5 @@ try:
     )
 
 except Exception as e:
-    st.warning("Veri kaynağı 'cekilen_ilanlar.csv' senkronize edilemedi veya dosya içeriği boş.")
-    st.error(f"Hata Kodu: {e}")
+    st.warning("Veri okunamadı. Botun 'cekilen_ilanlar.csv' dosyasını çalışma dizinine başarıyla kaydettiğinden emin olun.")
+    st.error(f"Teknik Hata Detayı: {e}")
